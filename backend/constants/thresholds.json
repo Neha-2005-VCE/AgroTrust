@@ -1,0 +1,5 @@
+{
+  "soilMoisture": { "min": 40, "max": 70 },
+  "temperature": { "min": 20, "max": 35 },
+  "humidity": { "min": 40, "max": 80 }
+}
