@@ -36,6 +36,9 @@ router.post('/', authMiddleware, requireInvestor, async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (!project.farmer) {
+      return res.status(400).json({ error: 'Project farmer is missing' });
+    }
 
     // One project can be funded only once.
     // If any investment already exists for this project, block reinvestment.
@@ -58,17 +61,47 @@ router.post('/', authMiddleware, requireInvestor, async (req, res) => {
       });
     }
 
-    // Resolve initial release percent from agreement (if available).
-    // Fallback to 20% so funds are not shown as fully locked.
-    const agreement = await Agreement.findOne({
+    const campaignTarget = Number(project.campaignTarget || project.targetFund || 0);
+    const configuredMgsAmountRaw = Number(project.mgsAmount);
+    const configuredMgsAmount = Number.isFinite(configuredMgsAmountRaw)
+      ? Math.max(configuredMgsAmountRaw, 0)
+      : Math.max(campaignTarget - Number(project.farmerBudget || 0), 0);
+
+    const investorShare = campaignTarget > 0 ? (amt / campaignTarget) : 1;
+    const guarantee_amount = Math.max(configuredMgsAmount * investorShare, 0);
+    const farmerPoolContribution = Math.max(amt - guarantee_amount, 0);
+
+    // Find or create agreement for this investment
+    let agreement = await Agreement.findOne({
       projectId: projectId,
       investorId: req.user.id,
-    }).select('initialReleasePercent');
+    });
+    if (!agreement) {
+      // Get farmer userId from project
+      const farmerId = project.farmer;
+      agreement = new Agreement({
+        projectId: projectId,
+        investorId: req.user.id,
+        farmer: farmerId,
+        return_type: 'fixed',
+        initialReleasePercent: 15,
+        milestones: [
+          { name: 'Sowing', percent: 25 },
+          { name: 'Growing', percent: 35 },
+          { name: 'Pre-harvest', percent: 10 },
+          { name: 'Harvest', percent: 15 }
+        ],
+        status: 'draft',
+        farmer_signed: false,
+        investor_signed: false
+      });
+      await agreement.save();
+    }
     const initialReleasePercentRaw = Number(agreement?.initialReleasePercent);
     const initialReleasePercent = Number.isFinite(initialReleasePercentRaw)
-      ? Math.min(100, Math.max(0, initialReleasePercentRaw))
+      ? Math.min(30, Math.max(20, initialReleasePercentRaw))
       : 20;
-    const initialRelease = Math.round((amt * initialReleasePercent) / 100);
+    const initialRelease = Math.round((farmerPoolContribution * initialReleasePercent) / 100);
     const escrowAmount = Math.max(amt - initialRelease, 0);
 
     let wallet = await Wallet.findOne({ userId: req.user.id });
@@ -81,6 +114,13 @@ router.post('/', authMiddleware, requireInvestor, async (req, res) => {
 
     wallet.balance -= amt;
     await wallet.save();
+
+    let farmerWallet = await Wallet.findOne({ userId: project.farmer });
+    if (!farmerWallet) {
+      farmerWallet = await Wallet.create({ userId: project.farmer, balance: 100000 });
+    }
+    farmerWallet.balance += initialRelease;
+    await farmerWallet.save();
 
     let escrow = await Escrow.findOne({ projectId });
     if (!escrow) {
@@ -105,8 +145,9 @@ router.post('/', authMiddleware, requireInvestor, async (req, res) => {
     project.releasedFunds = (project.releasedFunds || 0) + initialRelease;
     await project.save();
 
-    const guarantee_percent = 0.2;
-    const guarantee_amount = amt * guarantee_percent;
+    const guarantee_percent = campaignTarget > 0
+      ? (guarantee_amount / campaignTarget)
+      : Number(project.mgsRate || 0.2);
     const mgs = new MinimumGuaranteedSupport({
       investment_id: investment._id,
       guarantee_percent,
@@ -122,6 +163,7 @@ router.post('/', authMiddleware, requireInvestor, async (req, res) => {
       message: 'Investment successful',
       investedAmount: amt,
       releasedAmount: initialRelease,
+      releasedToFarmerWallet: true,
       escrowLockedAmount: escrowAmount,
       initialReleasePercent,
       escrowBalance: escrow.totalLocked,

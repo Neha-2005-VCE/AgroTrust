@@ -4,6 +4,8 @@
 const IoTReading = require('../models/IoTReading');
 const Project = require('../models/Project');
 const Investment = require('../models/Investment');
+const { attemptStageRelease } = require('../services/stageReleaseService');
+const { validateThreshold } = require('../helpers/validateThreshold');
 
 
 exports.analyzeData = async (req, res) => {
@@ -80,6 +82,11 @@ exports.analyzeData = async (req, res) => {
   }
 
   try {
+    const soilOk = validateThreshold('soilMoisture', Number(soilMoisture)).valid;
+    const tempOk = validateThreshold('temperature', Number(temperature)).valid;
+    const humOk = validateThreshold('humidity', Number(humidity)).valid;
+    const thresholdMet = soilOk && tempOk && humOk;
+
     // Save to DB
     const reading = new IoTReading({
       soilMoisture,
@@ -89,9 +96,19 @@ exports.analyzeData = async (req, res) => {
       healthScore,
       riskLevel,
       project_id,
-      investment_id
+      projectId: project_id,
+      investment_id,
+      investmentId: investment_id,
+      thresholdMet,
     });
     await reading.save();
+
+    let releaseAttempt = null;
+    if (reading.thresholdMet === true) {
+      releaseAttempt = await attemptStageRelease({
+        projectId: project._id,
+      });
+    }
 
     return res.status(200).json({
       farmer: {
@@ -104,6 +121,7 @@ exports.analyzeData = async (req, res) => {
       },
       project_id,
       investment_id
+      ,releaseAttempt
     });
   } catch (err) {
     console.error('Error saving IoT reading:', err);

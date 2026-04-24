@@ -39,7 +39,7 @@ router.post('/raise', authMiddleware, requireRole('farmer'), async (req, res) =>
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     // c. Verify ownership
-    if (req.user.userId !== project.farmerId.toString()) {
+    if (!project.farmer || req.user.userId !== project.farmer.toString()) {
       return res.status(403).json({ error: 'Not your project' });
     }
 

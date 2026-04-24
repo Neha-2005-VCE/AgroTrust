@@ -71,6 +71,37 @@ const projectSchema = new mongoose.Schema({
     min: 0
   },
 
+  farmerBudget: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
+  campaignTarget: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
+  mgsRate: {
+    type: Number,
+    default: 0.2,
+    min: 0,
+    max: 1
+  },
+
+  mgsAmount: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+
+  mgsStatus: {
+    type: String,
+    enum: ['locked', 'returned_to_investors', 'released_to_farmer'],
+    default: 'locked'
+  },
+
   fundedAmount: {
     type: Number,
     default: 0,

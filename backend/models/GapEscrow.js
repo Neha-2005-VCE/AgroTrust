@@ -5,6 +5,7 @@ const BreakdownSchema = new Schema({
   investorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   amount: { type: Number, required: true },
   returnRate: { type: Number, required: true },
+  layer: { type: Number, default: 1 },
   lockedAt: { type: Date, default: Date.now }
 }, { _id: false });
 

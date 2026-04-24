@@ -57,7 +57,7 @@ async function releaseGapMilestone({ gapRequestId, milestoneIndex }) {
 
   const project = await Project.findById(gapRequest.campaignId);
   if (!project) throw new Error('Project not found');
-  const farmerId = project.farmerId;
+  const farmerId = project.farmer;
 
   const farmerWallet = await VirtualWallet.findOne({ userId: farmerId });
   if (!farmerWallet) throw new Error('Farmer wallet not found');

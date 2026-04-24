@@ -21,6 +21,10 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+    delete config.headers["Content-Type"];
+    delete config.headers["content-type"];
+  }
   return config;
 });
 
@@ -55,7 +59,7 @@ export function roleToApi(uiRole) {
 export function routeForRole(role) {
   const r = String(role || "").toLowerCase();
   if (r === "investor") return "/investor/dashboard";
-  if (r === "expert") return "/admin/dashboard";
+  if (r === "expert" || r === "admin") return "/admin/dashboard";
   if (r === "buyer") return "/buyer/dashboard";
   return "/farmer/dashboard";
 }

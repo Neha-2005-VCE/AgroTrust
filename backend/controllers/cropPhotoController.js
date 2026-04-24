@@ -4,6 +4,8 @@ const Farm = require('../models/Project'); // Assuming Project is the farm model
 const Investment = require('../models/Investment');
 const { notifyExpert, notifyFarmer } = require('../services/notificationService');
 const cloudinary = require('../config/cloudinary');
+const { attemptStageRelease } = require('../services/stageReleaseService');
+const { returnPendingGuaranteesToInvestors } = require('../services/mgsService');
 
 // 1. uploadPhoto
 exports.uploadPhoto = async (req, res) => {
@@ -46,6 +48,7 @@ exports.uploadPhoto = async (req, res) => {
             status: 'PENDING'
           });
           await newPhoto.save();
+          await Farm.findByIdAndUpdate(farm_id, { $set: { milestoneStatus: 'proof_submitted' } });
           await notifyExpert(farm_id, result.secure_url, newPhoto.uploaded_at);
           res.status(200).json({ success: true, photo_id: newPhoto._id, photo_url: newPhoto.photo_url, status: 'PENDING' });
         } catch (error) {
@@ -92,14 +95,35 @@ exports.verifyPhoto = async (req, res) => {
 
     const photo = await CropPhoto.findById(photo_id);
     if (!photo) return res.status(400).json({ error: 'Photo not found.' });
+
     photo.status = verdict;
     photo.remarks = remarks || null;
     photo.expert_id = req.body.expert_id || req.user.id;
     photo.verified_at = new Date();
     await photo.save();
-    // If APPROVED, update related milestone (pseudo code, adjust as needed)
+
     if (verdict === 'APPROVED') {
-      // TODO: Update milestone to COMPLETED
+      await Farm.findByIdAndUpdate(photo.farm_id, { $set: { milestoneStatus: 'verified' } });
+    } else if (verdict === 'REJECTED') {
+      await Farm.findByIdAndUpdate(photo.farm_id, { $set: { milestoneStatus: 'active' } });
+    }
+
+    let release = null;
+    if (verdict === 'APPROVED') {
+      release = await attemptStageRelease({
+        projectId: photo.farm_id,
+        stage: photo.stage,
+        approvedBy: req.user.id,
+        sourcePhotoId: photo._id,
+      });
+
+      if (String(photo.stage || '').toLowerCase() === 'harvest') {
+        const mgsRelease = await returnPendingGuaranteesToInvestors(photo.farm_id, 'Harvest success MGS return');
+        release = {
+          ...release,
+          mgsRelease,
+        };
+      }
     }
     // Notify farmer (fetch farmer email from investment or farm)
     let farmerEmail = '';
@@ -116,7 +140,13 @@ exports.verifyPhoto = async (req, res) => {
         console.warn('notifyFarmer:', notifyErr.message);
       }
     }
-    res.status(200).json({ success: true, photo_id: photo._id, verdict, verified_at: photo.verified_at });
+    res.status(200).json({
+      success: true,
+      photo_id: photo._id,
+      verdict,
+      verified_at: photo.verified_at,
+      release,
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

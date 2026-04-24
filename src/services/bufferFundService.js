@@ -5,6 +5,20 @@ const User = require('../../backend/models/User');
 const GapEscrow = require('../../backend/models/GapEscrow');
 const creditScoreService = require('./creditScoreService');
 
+async function getPlatformBufferUserId() {
+  let user = await User.findOne({ email: 'platform-buffer@agrotrust.local' });
+  if (!user) {
+    user = await User.create({
+      name: 'Platform Buffer',
+      email: 'platform-buffer@agrotrust.local',
+      password: 'PlatformBuffer#2026',
+      role: 'expert',
+      verificationStatus: 'approved',
+    });
+  }
+  return user._id;
+}
+
 async function addToBuffer({ amount, sourceProjectId }) {
   let buffer = await Buffer.findOne({ bufferId: 'platform_buffer' });
   if (!buffer) {
@@ -32,6 +46,7 @@ async function checkBufferBalance() {
 }
 
 async function deployBuffer({ gapRequestId, amount }) {
+    const platformBufferUserId = await getPlatformBufferUserId();
   const buffer = await Buffer.findOne({ bufferId: 'platform_buffer' });
   if (!buffer || buffer.totalBalance < amount) throw new Error('Insufficient buffer funds');
   const gapRequest = await GapRequest.findById(gapRequestId);
@@ -54,7 +69,7 @@ async function deployBuffer({ gapRequestId, amount }) {
   gapEscrow.totalLocked += amount;
   // Add platform_buffer as a contribution
   gapRequest.contributions.push({
-    investorId: 'platform_buffer',
+    investorId: platformBufferUserId,
     amount,
     returnRate: 0,
     layer: 3

@@ -126,8 +126,8 @@ router.post('/check-expiry/:gapRequestId', authMiddleware, async (req, res) => {
 
 module.exports = router;
 
-// POST /api/gap/raise [authMiddleware, farmer only]
-router.post('/raise', authMiddleware, async (req, res) => {
+// POST /api/gap/raise-fasttrack [authMiddleware, farmer only]
+router.post('/raise-fasttrack', authMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'farmer') return res.status(403).json({ error: 'Forbidden' });
     const { projectId, amountRequested, reason, itemizedBreakdown, iotDataSnapshot } = req.body;

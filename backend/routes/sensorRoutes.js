@@ -24,7 +24,9 @@ router.post('/simulate', authMiddleware, async (req, res) => {
 
     const reading = new IoTReading({
       project_id: projectId,
+      projectId,
       investment_id: investmentId,
+      investmentId,
       soilMoisture,
       temperature,
       humidity,
@@ -43,7 +45,9 @@ router.post('/simulate', authMiddleware, async (req, res) => {
 router.get('/history/:projectId', authMiddleware, async (req, res) => {
   try {
     const { projectId } = req.params;
-    const readings = await IoTReading.find({ project_id: projectId })
+    const readings = await IoTReading.find({
+      $or: [{ project_id: projectId }, { projectId }],
+    })
       .sort({ createdAt: -1 })
       .limit(10)
       .lean();
@@ -56,7 +60,7 @@ router.get('/history/:projectId', authMiddleware, async (req, res) => {
 router.get('/soil-moisture', async (req, res) => {
   try {
     const readings = await IoTReading.find({})
-      .select('soilMoisture humidity temperature project_id createdAt')
+      .select('soilMoisture humidity temperature project_id projectId createdAt')
       .sort({ createdAt: -1 })
       .limit(50);
     res.json(readings);

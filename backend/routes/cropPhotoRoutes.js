@@ -6,8 +6,8 @@ const upload = require('../middleware/upload');
 const auth = require('../middleware/authMiddleware');
 
 function requireExpert(req, res, next) {
-  if (!req.user || req.user.role !== 'expert') {
-    return res.status(403).json({ error: 'Only experts (verifiers) can access this' });
+	if (!req.user || !['expert', 'admin'].includes(req.user.role)) {
+		return res.status(403).json({ error: 'Only experts/admin can access this' });
   }
   next();
 }
@@ -33,6 +33,9 @@ router.post(
 
 // 4. GET /expert/pending-verifications
 router.get('/expert/pending-verifications', auth, requireExpert, cropPhotoController.getPendingVerifications);
+
+// 4b. GET /admin/pending-verifications (alias for admin UI compatibility)
+router.get('/admin/pending-verifications', auth, requireExpert, cropPhotoController.getPendingVerifications);
 
 // 5. GET /expert/photo/:photo_id
 router.get('/expert/photo/:photo_id', auth, cropPhotoController.getPhotoDetails);

@@ -20,7 +20,7 @@ function sidebarForRole(role) {
       { id: "settings", label: "Settings", icon: "settings", to: "/settings" },
     ];
   }
-  if (role === "expert") {
+  if (role === "expert" || role === "admin") {
     return [
       { id: "verification", label: "Admin", icon: "admin_panel_settings", to: "/admin/dashboard" },
       { id: "queue", label: "Verification", icon: "fact_check", to: "/admin/verification" },
@@ -55,7 +55,7 @@ function topNavForRole(role) {
       { key: "settings", label: "Settings", to: "/settings" },
     ];
   }
-  if (role === "expert") {
+  if (role === "expert" || role === "admin") {
     return [
       { key: "verification", label: "Admin", to: "/admin/dashboard" },
       { key: "queue", label: "Verification", to: "/admin/verification" },
@@ -162,7 +162,7 @@ export default function ConsoleShell({
         <aside className="hidden lg:flex w-64 flex-col border-r border-white/5 bg-[#161e2b]/90 shrink-0">
           <div className="p-6 pb-4">
             <p className="text-[10px] font-semibold tracking-[0.2em] text-agri-text-muted uppercase">
-              {role === "investor" ? "Investor Console" : role === "expert" ? "Expert Console" : "Field Console"}
+              {role === "investor" ? "Investor Console" : role === "expert" || role === "admin" ? "Expert Console" : "Field Console"}
             </p>
             <p className="text-sm font-headline font-bold text-on-surface mt-1">AgroTrust Pro</p>
           </div>

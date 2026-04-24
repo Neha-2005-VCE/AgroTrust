@@ -16,7 +16,11 @@ module.exports = (io) => {
       const readingObj = { sensorId, projectId, soilMoisture, temperature, humidity };
       const thresholdMet = isWithinThreshold(readingObj);
       // Save to DB
-      const reading = new IoTReading({ ...readingObj, thresholdMet });
+      const reading = new IoTReading({
+        ...readingObj,
+        project_id: projectId,
+        thresholdMet,
+      });
       await reading.save();
       // Emit latest reading
       io.emit('iot:update', reading);

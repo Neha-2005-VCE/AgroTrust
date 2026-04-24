@@ -1,5 +1,11 @@
 const nodemailer = require('nodemailer');
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+
+const dotenvResult = dotenv.config();
+if (dotenvResult.error) {
+  dotenv.config({ path: path.join(__dirname, '..', 'env') });
+}
 
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;

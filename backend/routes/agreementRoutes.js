@@ -2,13 +2,26 @@ const express = require('express');
 const router = express.Router();
 const Agreement = require('../models/Agreement');
 
+const User = require('../models/User');
+
 // Create agreement (updated)
 const mongoose = require('mongoose');
 router.post('/', async (req, res) => {
   try {
-    const { projectId, investorId, farmer, return_type, initialReleasePercent, milestones } = req.body;
+    const { projectId, investorId, farmer, return_type } = req.body;
+    let { initialReleasePercent, milestones } = req.body;
     if (!projectId || !investorId || !farmer || !return_type) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+    // Set defaults if not provided
+    if (typeof initialReleasePercent !== 'number') initialReleasePercent = 15;
+    if (!Array.isArray(milestones) || milestones.length === 0) {
+      milestones = [
+        { name: 'Sowing', percent: 25 },
+        { name: 'Growing', percent: 35 },
+        { name: 'Pre-harvest', percent: 10 },
+        { name: 'Harvest', percent: 15 }
+      ];
     }
     const agreement = new Agreement({
       projectId: new mongoose.Types.ObjectId(projectId),
@@ -107,3 +120,25 @@ router.post('/:id/milestone-update', async (req, res) => {
 });
 
 module.exports = router;
+
+// Get projectId by farmer and investor emails
+router.get('/by-emails', async (req, res) => {
+  const { farmerEmail, investorEmail } = req.query;
+  if (!farmerEmail || !investorEmail) {
+    return res.status(400).json({ error: 'Both farmerEmail and investorEmail are required' });
+  }
+  try {
+    const farmer = await User.findOne({ email: farmerEmail });
+    const investor = await User.findOne({ email: investorEmail });
+    if (!farmer || !investor) {
+      return res.status(404).json({ error: 'Farmer or investor not found' });
+    }
+    const agreement = await Agreement.findOne({ farmer: farmer._id, investorId: investor._id }).sort({ createdAt: -1 });
+    if (!agreement) {
+      return res.status(404).json({ error: 'Agreement not found' });
+    }
+    res.json({ projectId: agreement.projectId, agreementId: agreement._id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});

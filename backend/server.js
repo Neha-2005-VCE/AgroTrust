@@ -1,6 +1,12 @@
 const investmentRoutes = require('./routes/investmentRoutes');
+const iotReadingsRoutes = require('./routes/iotReadings');
 
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+const dotenvResult = dotenv.config();
+if (dotenvResult.error) {
+  dotenv.config({ path: path.join(__dirname, 'env') });
+}
 const isDev = process.env.NODE_ENV !== 'production';
 if (isDev) {
   console.log('POLYGON_RPC_URL:', process.env.POLYGON_RPC_URL || '(unset)');
@@ -70,12 +76,18 @@ app.use(express.json());
 app.use('/api', investmentRoutes);
 
 // ================== DATABASE ==================
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
+const MONGO_URI = process.env.MONGO_URI;
+
+if (MONGO_URI) {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log('MongoDB connected'))
+    .catch((err) => {
+      console.error('MongoDB connection error:', err);
+      process.exit(1);
+    });
+} else {
+  console.warn('MONGO_URI is unset; starting backend without a database connection.');
+}
 
 // ================== ROUTES ==================
 
@@ -102,7 +114,7 @@ app.use('/api/wallet', require('./routes/walletSummaryRoutes'));
 app.use('/api', cropPhotoRoutes);
 app.use('/api/gap', require('./routes/gapFunding'));
 app.use('/api/gap', require('./routes/gapRequest'));
-// ...existing code...
+app.use('/api/iot', iotReadingsRoutes);
 // Move iotRoutes to the end before error handler
 app.use('/api', iotRoutes);
 
@@ -240,8 +252,8 @@ app.use((err, req, res, next) => {
 // ================== SERVER ==================
 const PORT = 5001;
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT} — accessible on network`);
 });
 
 module.exports = { app, io };

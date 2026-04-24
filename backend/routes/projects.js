@@ -39,6 +39,22 @@ async function ensureFarmerApproved(userId) {
   };
 }
 
+function calculateCampaignTarget(farmerNeeds, mgsRate = 0.2) {
+  const safeRate = Number.isFinite(Number(mgsRate)) ? Number(mgsRate) : 0.2;
+  if (safeRate < 0 || safeRate >= 1) {
+    throw new Error('mgsRate must be between 0 and 1');
+  }
+  const farmerBudget = Math.max(Number(farmerNeeds || 0), 0);
+  const campaignTarget = farmerBudget / (1 - safeRate);
+  const mgsAmount = campaignTarget - farmerBudget;
+  return {
+    farmerBudget,
+    campaignTarget,
+    mgsAmount,
+    mgsRate: safeRate,
+  };
+}
+
 // CREATE PROJECT
 router.post('/', authMiddleware, requireFarmer, async (req, res) => {
   try {
@@ -50,6 +66,7 @@ router.post('/', authMiddleware, requireFarmer, async (req, res) => {
       description,
       cropType,
       targetFund,
+      mgsRate,
       farmerName,
       farmLocation,
       phoneNumber,
@@ -65,17 +82,29 @@ router.post('/', authMiddleware, requireFarmer, async (req, res) => {
         ? `Farm Project · ${String(cropName).trim()}`
         : "");
 
-    const resolvedTarget = Number(targetFund);
+    const resolvedFarmerNeeds = Number(targetFund);
 
-    if (!resolvedTitle || !Number.isFinite(resolvedTarget)) {
+    if (!resolvedTitle || !Number.isFinite(resolvedFarmerNeeds)) {
       return res.status(400).json({ error: 'Title and targetFund are required' });
     }
+
+    const {
+      farmerBudget,
+      campaignTarget,
+      mgsAmount,
+      mgsRate: resolvedMgsRate,
+    } = calculateCampaignTarget(resolvedFarmerNeeds, mgsRate);
 
     const project = new Project({
       title: resolvedTitle,
       description,
       cropType: cropType || cropName,
-      targetFund: resolvedTarget,
+      targetFund: campaignTarget,
+      farmerBudget,
+      campaignTarget,
+      mgsAmount,
+      mgsRate: resolvedMgsRate,
+      mgsStatus: 'locked',
       farmerName,
       farmLocation,
       phoneNumber,

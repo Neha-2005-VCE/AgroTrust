@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 import ConsoleShell from "../components/ConsoleShell";
+import IoTReadings from '../components/IoTReadings';
 
 function fmtDate(d) {
   if (!d) return "—";
@@ -56,10 +57,12 @@ const STAGES = [
   { value: "harvest", label: "Harvest" },
 ];
 
+const STAGE_ORDER = ["sowing", "growing", "pre-harvest", "harvest"];
+
 const MILESTONE_STEPS = [
   { idx: 0, key: "sowing", label: "Sowing" },
   { idx: 1, key: "growing", label: "Growing" },
-  { idx: 2, key: "flowering", label: "Flowering" },
+  { idx: 2, key: "pre-harvest", label: "Pre-harvest" },
   { idx: 3, key: "harvest", label: "Harvest" },
 ];
 
@@ -69,9 +72,12 @@ export default function FarmerDashboard() {
   const [projectId, setProjectId] = useState("");
   const [investments, setInvestments] = useState([]);
   const [investmentId, setInvestmentId] = useState("");
-  const [stage, setStage] = useState("growing");
+  const [stage, setStage] = useState("sowing");
   const [readings, setReadings] = useState([]);
   const [escrow, setEscrow] = useState(null);
+  const [latestProof, setLatestProof] = useState(null);
+  const [latestProofByStage, setLatestProofByStage] = useState({});
+  const [harvestReconcileDone, setHarvestReconcileDone] = useState(false);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [view, setView] = useState("dashboard"); // dashboard | portfolio | projects | milestones | reports
@@ -87,6 +93,16 @@ export default function FarmerDashboard() {
     expectedYield: "",
     targetFund: "50000",
   });
+
+  const buildLatestProofByStage = useCallback((items) => {
+    const map = {};
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const stageKey = String(item?.stage || "").toLowerCase();
+      if (!stageKey) return;
+      if (!map[stageKey]) map[stageKey] = item;
+    });
+    return map;
+  }, []);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -131,10 +147,11 @@ export default function FarmerDashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const [invRes, histRes, escRes] = await Promise.all([
+        const [invRes, histRes, escRes, proofRes] = await Promise.all([
           api.get(`/api/projects/${projectId}/investments`),
           api.get(`/api/sensors/history/${projectId}`),
           api.get(`/api/escrow/${projectId}`).catch(() => ({ data: null })),
+          api.get(`/api/crop/photo/history/${projectId}`).catch(() => ({ data: { items: [] } })),
         ]);
         if (cancelled) return;
         const invs = Array.isArray(invRes.data) ? invRes.data : [];
@@ -146,6 +163,9 @@ export default function FarmerDashboard() {
         }
         setReadings(Array.isArray(histRes.data) ? histRes.data : []);
         setEscrow(escRes.data || null);
+        const proofItems = Array.isArray(proofRes?.data?.items) ? proofRes.data.items : [];
+        setLatestProof(proofItems.length ? proofItems[0] : null);
+        setLatestProofByStage(buildLatestProofByStage(proofItems));
       } catch (e) {
         if (!cancelled) setMsg(e.response?.data?.error || "Failed to load project data.");
       }
@@ -154,6 +174,80 @@ export default function FarmerDashboard() {
       cancelled = true;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+
+    let active = true;
+
+    const syncSelectedProject = async () => {
+      try {
+        const [projectRes, proofRes] = await Promise.all([
+          api.get(`/api/projects/${projectId}`),
+          api.get(`/api/crop/photo/history/${projectId}`).catch(() => ({ data: { items: [] } })),
+        ]);
+        const fresh = projectRes.data;
+        if (!active || !fresh?._id) return;
+
+        const items = Array.isArray(proofRes?.data?.items) ? proofRes.data.items : [];
+        setLatestProof(items.length ? items[0] : null);
+        setLatestProofByStage(buildLatestProofByStage(items));
+
+        setProjects((prev) => {
+          const next = Array.isArray(prev) ? [...prev] : [];
+          const idx = next.findIndex((p) => p._id === fresh._id);
+          if (idx >= 0) next[idx] = { ...next[idx], ...fresh };
+          return next;
+        });
+      } catch (_err) {
+        // Keep the current UI state if periodic sync fails.
+      }
+    };
+
+    syncSelectedProject();
+    const intervalId = setInterval(syncSelectedProject, 10000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, [projectId, buildLatestProofByStage]);
+
+  useEffect(() => {
+    if (!projectId || harvestReconcileDone) return;
+
+    const harvestProof = latestProofByStage.harvest;
+    const harvestApproved = String(harvestProof?.status || "").toUpperCase() === "APPROVED";
+    const hasLockedFunds = Number(escrow?.totalLocked || 0) > 0;
+    if (!harvestApproved || !hasLockedFunds) return;
+
+    let active = true;
+    (async () => {
+      try {
+        await api.post("/api/mgs/release-harvest", { projectId });
+        if (!active) return;
+        setHarvestReconcileDone(true);
+        await loadProjects();
+        const [freshProjectRes, freshEscrowRes] = await Promise.all([
+          api.get(`/api/projects/${projectId}`),
+          api.get(`/api/escrow/${projectId}`).catch(() => ({ data: null })),
+        ]);
+        const freshProject = freshProjectRes?.data;
+        if (freshProject?._id) {
+          setProjects((prev) =>
+            Array.isArray(prev) ? prev.map((p) => (p._id === freshProject._id ? { ...p, ...freshProject } : p)) : prev
+          );
+        }
+        setEscrow(freshEscrowRes.data || null);
+      } catch (_err) {
+        if (active) setHarvestReconcileDone(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [projectId, latestProofByStage, escrow, harvestReconcileDone, loadProjects]);
 
   const latest = readings[0];
   const soil = latest?.soilMoisture ?? 64;
@@ -181,17 +275,37 @@ export default function FarmerDashboard() {
       alert("Choose project, investment, and a photo file.");
       return;
     }
+    const milestoneIdxRaw = Number(selectedProject?.currentMilestone ?? 0);
+    const milestoneIdx = Number.isFinite(milestoneIdxRaw) ? Math.max(0, Math.min(3, milestoneIdxRaw)) : 0;
+    const expectedStageValue = STAGE_ORDER[milestoneIdx] || "sowing";
+    const normalizedStage = String(stage).toLowerCase();
+    if (normalizedStage !== expectedStageValue) {
+      alert(`Please upload proof for the current stage: ${expectedStageValue}`);
+      e.target.value = "";
+      return;
+    }
+
     const fd = new FormData();
     fd.append("photo", file);
     fd.append("farm_id", projectId);
     fd.append("investment_id", investmentId);
-    fd.append("stage", stage);
+    fd.append("stage", expectedStageValue);
     try {
-      await api.post("/api/crop/photo/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const uploadRes = await api.post("/api/crop/photo/upload", fd);
+      const uploadedProof = {
+        stage: expectedStageValue,
+        status: String(uploadRes?.data?.status || "PENDING").toUpperCase(),
+        uploaded_at: new Date().toISOString(),
+      };
+      setLatestProof(uploadedProof);
+      setLatestProofByStage((prev) => ({ ...prev, [expectedStageValue]: uploadedProof }));
+      setProjects((prev) =>
+        Array.isArray(prev)
+          ? prev.map((p) => (p._id === projectId ? { ...p, milestoneStatus: "proof_submitted" } : p))
+          : prev
+      );
       alert("Photo uploaded for expert review.");
-      setMsg("Upload queued for verification.");
+      setMsg(`Photo uploaded for ${expectedStageValue} stage and submitted for verification.`);
     } catch (err) {
       alert(err.response?.data?.error || err.message || "Upload failed (check Cloudinary env on server).");
     }
@@ -246,6 +360,23 @@ export default function FarmerDashboard() {
   const milestoneIdxRaw = Number(selectedProject?.currentMilestone ?? 0);
   const milestoneIdx = Number.isFinite(milestoneIdxRaw) ? Math.max(0, Math.min(3, milestoneIdxRaw)) : 0;
   const currentStageLabel = MILESTONE_STEPS.find((s) => s.idx === milestoneIdx)?.label || "Growing";
+  const expectedStageValue = STAGE_ORDER[milestoneIdx] || "sowing";
+  const isCompleted = String(selectedProject?.status || "").toLowerCase() === "completed";
+
+  useEffect(() => {
+    setStage(expectedStageValue);
+  }, [expectedStageValue, projectId]);
+
+  const selectedStageProof = latestProofByStage[String(stage).toLowerCase()] || null;
+  const selectedStageProofStatus = String(selectedStageProof?.status || "").toUpperCase();
+  const selectedStageProofLabel =
+    selectedStageProofStatus === "PENDING"
+      ? "Photo uploaded and submitted for verification"
+      : selectedStageProofStatus === "APPROVED"
+        ? "Photo approved"
+        : selectedStageProofStatus === "REJECTED"
+          ? "Photo rejected"
+          : "No photo uploaded for this stage yet";
 
   return (
     <ConsoleShell
@@ -517,9 +648,9 @@ export default function FarmerDashboard() {
               <div className="flex flex-wrap gap-3">
                 <div className="px-4 py-3 rounded-2xl bg-agri-bg-soft border border-white/10 min-w-[180px]">
                   <div className="text-[10px] uppercase text-agri-text-muted font-bold tracking-wider">Stage</div>
-                  <div className="mt-1 text-lg font-headline font-bold">{currentStageLabel}</div>
+                  <div className="mt-1 text-lg font-headline font-bold">{isCompleted ? "Harvest Completed" : currentStageLabel}</div>
                   <div className="mt-1 text-xs text-on-surface-variant">
-                    Status: {selectedProject?.milestoneStatus || "pending"}
+                    Status: {isCompleted ? "completed" : selectedProject?.milestoneStatus || "pending"}
                   </div>
                 </div>
                 <div className="px-4 py-3 rounded-2xl bg-agri-bg-soft border border-white/10 min-w-[180px]">
@@ -552,12 +683,12 @@ export default function FarmerDashboard() {
                 <div className="absolute left-0 right-0 top-[18px] h-[2px] bg-white/10 rounded-full" />
                 <div
                   className="absolute left-0 top-[18px] h-[2px] bg-primary/60 rounded-full"
-                  style={{ width: `${(milestoneIdx / (MILESTONE_STEPS.length - 1)) * 100}%` }}
+                  style={{ width: `${isCompleted ? 100 : (milestoneIdx / (MILESTONE_STEPS.length - 1)) * 100}%` }}
                 />
                 <div className="grid grid-cols-4 gap-2">
                   {MILESTONE_STEPS.map((s) => {
-                    const active = s.idx === milestoneIdx;
-                    const done = s.idx < milestoneIdx;
+                    const active = !isCompleted && s.idx === milestoneIdx;
+                    const done = isCompleted ? true : s.idx < milestoneIdx;
                     return (
                       <div key={s.key} className="flex flex-col items-center text-center">
                         <div
@@ -571,7 +702,7 @@ export default function FarmerDashboard() {
                         >
                           {done ? <span className="material-symbols-outlined text-[18px]">check</span> : s.idx + 1}
                         </div>
-                        <div className={`mt-2 text-xs font-bold ${active ? "text-on-surface" : "text-on-surface-variant"}`}>
+                        <div className={`mt-2 text-xs font-bold ${active || done ? "text-on-surface" : "text-on-surface-variant"}`}>
                           {s.label}
                         </div>
                         <div className="text-[10px] text-agri-text-muted mt-0.5">{fmtDate(selectedProject?.createdAt)}</div>
@@ -657,6 +788,11 @@ export default function FarmerDashboard() {
                 <input type="file" accept="image/*" onChange={onUpload} className="text-sm text-on-surface-variant" />
               </label>
             </div>
+          </div>
+          <div className="text-xs text-agri-text-muted">
+            Stage status: <span className="font-bold text-on-surface">{selectedStageProofLabel}</span>
+            {selectedStageProof?.uploaded_at ? ` · ${fmtDate(selectedStageProof.uploaded_at)}` : ""}
+            {selectedStageProof?.verified_at ? ` · verified ${fmtDate(selectedStageProof.verified_at)}` : ""}
           </div>
         </section>
       </div>
@@ -854,7 +990,7 @@ export default function FarmerDashboard() {
                               ? "border-primary/40 bg-primary/10 text-primary"
                               : "border-white/10 bg-black/10 text-on-surface-variant"
                         }`}
-                      >
+                        >
                         {done ? <span className="material-symbols-outlined text-[18px]">check</span> : s.idx + 1}
                       </div>
                       <div className={`mt-2 text-xs font-bold ${active ? "text-on-surface" : "text-on-surface-variant"}`}>
@@ -874,6 +1010,11 @@ export default function FarmerDashboard() {
               <div className="mt-2 text-xl font-headline font-extrabold">{currentStageLabel}</div>
               <div className="mt-2 text-sm text-on-surface-variant">
                 Milestone status: <span className="font-bold text-on-surface">{selectedProject?.milestoneStatus || "pending"}</span>
+              </div>
+              <div className="mt-2 text-sm text-on-surface-variant">
+                Latest proof: <span className="font-bold text-on-surface">{latestProof?.status || "PENDING"}</span>
+                {latestProof?.stage ? ` · ${String(latestProof.stage).replace(/-/g, " ")}` : ""}
+                {latestProof?.verified_at ? ` · ${fmtDate(latestProof.verified_at)}` : ""}
               </div>
             </div>
 

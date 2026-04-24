@@ -8,7 +8,7 @@ const Investment = require('../models/Investment');
 const router = express.Router();
 
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'expert') {
+  if (!req.user || !['expert', 'admin'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
@@ -49,7 +49,7 @@ router.patch('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { role, verificationStatus, verificationRemark } = req.body;
-    const allowedRoles = ['farmer', 'investor', 'buyer', 'expert'];
+    const allowedRoles = ['farmer', 'investor', 'buyer', 'expert', 'admin'];
     const allowedVerification = ['pending', 'approved', 'rejected', 'hold'];
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ error: 'Invalid user id' });

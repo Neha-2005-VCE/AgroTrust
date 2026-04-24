@@ -3,10 +3,14 @@ import api from "../services/api";
 import ConsoleShell from "../components/ConsoleShell";
 
 export default function AdminVerification() {
+  const [mode, setMode] = useState("photos");
   const [farmers, setFarmers] = useState([]);
+  const [photoQueue, setPhotoQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("pending");
+  const [remarksByPhoto, setRemarksByPhoto] = useState({});
+  const [busyPhotoId, setBusyPhotoId] = useState("");
 
   const loadFarmers = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -21,11 +25,36 @@ export default function AdminVerification() {
     }
   };
 
+  const loadPhotoQueue = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      let res;
+      try {
+        res = await api.get("/api/admin/pending-verifications");
+      } catch (_err) {
+        res = await api.get("/api/expert/pending-verifications");
+      }
+      setPhotoQueue(Array.isArray(res?.data) ? res.data : []);
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || "Failed to load photo verification queue");
+      setPhotoQueue([]);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    loadFarmers();
-    const id = setInterval(() => loadFarmers(true), 10000);
+    if (mode === "farmers") {
+      loadFarmers();
+    } else {
+      loadPhotoQueue();
+    }
+    const id = setInterval(() => {
+      if (mode === "farmers") loadFarmers(true);
+      else loadPhotoQueue(true);
+    }, 10000);
     return () => clearInterval(id);
-  }, []);
+  }, [mode]);
 
   const filteredFarmers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -36,6 +65,17 @@ export default function AdminVerification() {
       return [f.name, f.email].join(" ").toLowerCase().includes(q);
     });
   }, [farmers, search, statusFilter]);
+
+  const filteredPhotos = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return photoQueue.filter((p) => {
+      const stage = String(p.raw?.stage || p.tag || "").toLowerCase();
+      const statusOk = statusFilter === "all" || statusFilter === "pending";
+      if (!statusOk) return false;
+      if (!q) return true;
+      return [p.farmerName, p.title, p.location, stage].join(" ").toLowerCase().includes(q);
+    });
+  }, [photoQueue, search, statusFilter]);
 
   const updateStatus = async (farmerId, verificationStatus) => {
     const now = new Date();
@@ -65,27 +105,70 @@ export default function AdminVerification() {
     }
   };
 
+  const verifyPhoto = async (photoId, verdict) => {
+    setBusyPhotoId(photoId);
+    try {
+      const remarks = String(remarksByPhoto[photoId] || "").trim();
+      const res = await api.patch("/api/crop/photo/verify", {
+        photo_id: photoId,
+        verdict,
+        remarks,
+      });
+
+      setPhotoQueue((prev) => prev.filter((item) => item._id !== photoId));
+
+      const release = res?.data?.release;
+      if (release?.released) {
+        alert(`Photo ${verdict}. Funds released: ₹${release.releaseAmount || 0}`);
+      } else {
+        alert(`Photo ${verdict}. Funds not released yet: ${release?.reason || "Awaiting IoT/photo gate."}`);
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || "Could not verify photo");
+    } finally {
+      setBusyPhotoId("");
+    }
+  };
+
   return (
     <ConsoleShell activeTop="queue" activeSidebar="queue" omitPageHeader>
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6 mb-8">
         <div className="max-w-2xl">
           <h1 className="text-2xl sm:text-3xl font-headline font-extrabold tracking-tight text-on-surface">
-            Farmer Verification
+            {mode === "farmers" ? "Farmer Verification" : "Photo Verification"}
           </h1>
           <p className="text-sm text-agri-text-muted mt-2 leading-relaxed">
-            Verify registered farmers. Only approved farmers are discoverable to investors in search and marketplace.
-            Rejected or hold farmers remain hidden.
+            {mode === "farmers"
+              ? "Verify registered farmers. Only approved farmers are discoverable to investors in search and marketplace."
+              : "Review stage proof photos uploaded by farmers. Approve or reject each proof to continue milestone validation."}
           </p>
         </div>
         <div className="rounded-xl border border-white/10 bg-[#161e2b] px-5 py-3 text-xs font-bold text-primary shadow-lg">
-          {filteredFarmers.length} in view
+          {mode === "farmers" ? filteredFarmers.length : filteredPhotos.length} in view
         </div>
+      </div>
+
+      <div className="mb-4 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setMode("photos")}
+          className={`px-3 py-2 rounded-lg text-xs font-bold border ${mode === "photos" ? "border-primary/50 text-primary bg-primary/10" : "border-white/10 text-agri-text-muted"}`}
+        >
+          Photo Queue
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("farmers")}
+          className={`px-3 py-2 rounded-lg text-xs font-bold border ${mode === "farmers" ? "border-primary/50 text-primary bg-primary/10" : "border-white/10 text-agri-text-muted"}`}
+        >
+          Farmer KYC
+        </button>
       </div>
 
       <div className="mb-6 rounded-xl border border-white/10 bg-[#161e2b] p-3 flex flex-wrap gap-3">
         <input
           type="search"
-          placeholder="Search by farmer name or email..."
+          placeholder={mode === "farmers" ? "Search by farmer name or email..." : "Search by farmer, project, stage..."}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-[220px] px-3 py-2 rounded-lg bg-agri-bg-soft border border-white/10 text-sm"
@@ -95,21 +178,31 @@ export default function AdminVerification() {
           onChange={(e) => setStatusFilter(e.target.value)}
           className="px-3 py-2 rounded-lg bg-agri-bg-soft border border-white/10 text-sm"
         >
-          <option value="all">All statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="hold">Hold</option>
-          <option value="rejected">Rejected</option>
+          {mode === "farmers" ? (
+            <>
+              <option value="all">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="hold">Hold</option>
+              <option value="rejected">Rejected</option>
+            </>
+          ) : (
+            <>
+              <option value="pending">Pending</option>
+              <option value="all">All</option>
+            </>
+          )}
         </select>
         <button
           type="button"
-          onClick={() => loadFarmers(true)}
+          onClick={() => (mode === "farmers" ? loadFarmers(true) : loadPhotoQueue(true))}
           className="px-4 py-2 rounded-lg border border-primary/40 text-primary text-sm font-bold hover:bg-primary/10"
         >
           Refresh
         </button>
       </div>
 
+      {mode === "farmers" ? (
       <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <article className="rounded-xl border border-primary/25 bg-agri-card overflow-hidden">
           <img
@@ -166,16 +259,21 @@ export default function AdminVerification() {
           </div>
         </article>
       </div>
+      ) : null}
 
       {loading ? (
         <div className="flex items-center justify-center min-h-[280px] text-agri-text-muted">
-          Loading farmer verification queue…
+          Loading verification queue…
         </div>
-      ) : filteredFarmers.length === 0 ? (
+      ) : mode === "farmers" && filteredFarmers.length === 0 ? (
         <div className="rounded-xl border border-white/8 bg-[#161e2b] p-12 text-center text-agri-text-muted">
           No farmers found for this filter.
         </div>
-      ) : (
+      ) : mode === "photos" && filteredPhotos.length === 0 ? (
+        <div className="rounded-xl border border-white/8 bg-[#161e2b] p-12 text-center text-agri-text-muted">
+          No pending crop photos found.
+        </div>
+      ) : mode === "farmers" ? (
         <div className="space-y-3">
           {filteredFarmers.map((f) => (
             <div
@@ -221,6 +319,53 @@ export default function AdminVerification() {
               >
                 Reject
               </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredPhotos.map((p) => (
+            <div key={p._id} className="rounded-xl border border-white/10 bg-[#161e2b] p-4 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4">
+              <div className="rounded-lg overflow-hidden border border-white/10 bg-black/20">
+                <img src={p.imageUrl || p.raw?.photo_url} alt="proof" className="w-full h-full object-cover" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-white/15 text-on-surface-variant">
+                    {p.tag || p.raw?.stage || "STAGE"}
+                  </span>
+                  <span className="text-xs text-agri-text-muted">{p.location || "Project"}</span>
+                </div>
+                <p className="font-headline font-bold text-on-surface">{p.title || "Milestone proof"}</p>
+                <p className="text-xs text-agri-text-muted mt-1">{p.notes || p.snippet || "Awaiting review"}</p>
+                <p className="text-xs text-agri-text-muted mt-1">Farmer: {p.farmerName || "Farmer"}</p>
+
+                <textarea
+                  value={remarksByPhoto[p._id] || ""}
+                  onChange={(e) => setRemarksByPhoto((prev) => ({ ...prev, [p._id]: e.target.value }))}
+                  placeholder="Optional remarks"
+                  className="w-full mt-3 px-3 py-2 rounded-lg bg-agri-bg-soft border border-white/10 text-sm min-h-[80px]"
+                />
+
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busyPhotoId === p._id}
+                    onClick={() => verifyPhoto(p._id, "APPROVED")}
+                    className="px-3 py-2 rounded-lg bg-primary/20 border border-primary/40 text-primary text-xs font-bold disabled:opacity-60"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyPhotoId === p._id}
+                    onClick={() => verifyPhoto(p._id, "REJECTED")}
+                    className="px-3 py-2 rounded-lg bg-red-400/10 border border-red-300/40 text-red-200 text-xs font-bold disabled:opacity-60"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
         </div>

@@ -53,7 +53,7 @@ function App() {
           <Route
             path="/admin/verification"
             element={
-              <ProtectedRoute roles={["expert"]}>
+                <ProtectedRoute roles={["expert", "admin"]}>
                 <AdminVerification />
               </ProtectedRoute>
             }
@@ -61,7 +61,7 @@ function App() {
           <Route
             path="/admin/dashboard"
             element={
-              <ProtectedRoute roles={["expert"]}>
+                <ProtectedRoute roles={["expert", "admin"]}>
                 <AdminDashboard />
               </ProtectedRoute>
             }

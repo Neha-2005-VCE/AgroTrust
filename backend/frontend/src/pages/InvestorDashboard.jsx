@@ -245,9 +245,11 @@ export default function InvestorDashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let intervalId;
+
+    const loadProofHistory = async () => {
       if (!detailProject?._id) {
-        setProofHistory({ items: [] });
+        if (!cancelled) setProofHistory({ items: [] });
         return;
       }
       try {
@@ -256,9 +258,17 @@ export default function InvestorDashboard() {
       } catch {
         if (!cancelled) setProofHistory({ items: [] });
       }
+    };
+
+    (async () => {
+      await loadProofHistory();
     })();
+
+    intervalId = setInterval(loadProofHistory, 8000);
+
     return () => {
       cancelled = true;
+      if (intervalId) clearInterval(intervalId);
     };
   }, [detailProject?._id]);
 
